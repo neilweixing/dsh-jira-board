@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Jira board",
+    "description": "Shows the Jira issues assigned to your own account as a priority-ordered board, read from a self-hosted Jira through the URL and credentials you save in the panel. The sidebar row opens it; Refresh re-reads Jira on demand."
+  }
+}

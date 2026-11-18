@@ -1,0 +1,12 @@
+# dsh-jira-board bundle patch.
+#
+# One insert mounts the Host half, which owns the Jira account secret and the
+# only code that talks to Jira. The browser half is declared by package.json's
+# `dsh.client` and binds to this same row. `config` carries the board query and
+# page size; the address and credentials are saved from the panel instead, so
+# no secret ever lands in this file.
+- insert:
+    - id: dsh-jira-board
+      name: dsh-jira-board
+      config:
+        maxResults: 50
