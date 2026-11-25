@@ -68,6 +68,9 @@ window.__ModuleLoader__.load({
         updated: 'Updated',
         due: 'Due',
         openInJira: 'Open in Jira',
+        copyKey: 'Copy issue key',
+        copied: 'Copied',
+        copyFailed: 'Copy failed',
         saved: 'Connection saved and verified.',
         cleared: 'Connection forgotten.',
         noPriority: 'No priority',
@@ -101,6 +104,9 @@ window.__ModuleLoader__.load({
         updated: '更新于',
         due: '截止',
         openInJira: '在 Jira 中打开',
+        copyKey: '复制编号',
+        copied: '已复制',
+        copyFailed: '复制失败',
         saved: '连接已保存并验证通过。',
         cleared: '连接已清除。',
         noPriority: '无优先级',
@@ -161,19 +167,57 @@ window.__ModuleLoader__.load({
 .jb-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 .jb-rows { display: flex; flex-direction: column; gap: 6px; }
 .jb-row {
+  position: relative;
   display: flex; align-items: center; gap: 12px;
   padding: 10px 12px;
   border-radius: var(--dsw-radius-sm, 8px);
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-card-fill);
-  color: inherit; text-decoration: none;
 }
-.jb-row:hover { background: var(--dsw-alias-card-fill-hover); }
-.jb-row:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 1px; }
+/* The row itself is deliberately not a link: the key copies and the trailing
+   control opens Jira, so a whole-row link would make every click ambiguous. */
+@media (hover: hover) {
+  .jb-row:hover { background: var(--dsw-alias-card-fill-hover); }
+}
 .jb-key {
-  font-family: var(--dsw-font-family-code, monospace);
-  font-size: 12px; color: var(--dsw-alias-link);
   flex: none;
+  display: inline-flex; align-items: center; gap: 4px;
+  appearance: none; cursor: pointer;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--dsw-radius-xs, 4px);
+  background: none;
+  font-family: var(--dsw-font-family-code, monospace);
+  font-size: 12px; line-height: 1.5;
+  color: var(--dsw-alias-link);
+}
+@media (hover: hover) {
+  .jb-key:hover { background: var(--dsw-alias-interactive-bg-hover); border-color: var(--dsw-alias-border-l2); }
+}
+.jb-key:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 1px; }
+.jb-key[data-state='copied'] { color: var(--dsw-alias-state-success-primary); border-color: var(--dsw-alias-state-success-secondary); }
+.jb-key[data-state='failed'] { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-secondary); }
+.jb-keyMark { font-size: 11px; line-height: 1; }
+.jb-open {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: var(--dsw-radius-xs, 4px);
+  border: 1px solid transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+@media (hover: hover) {
+  .jb-open:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    border-color: var(--dsw-alias-border-l2);
+    color: var(--dsw-alias-label-primary);
+  }
+}
+.jb-open:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 1px; }
+/* Announce copy feedback without adding a visible line to every row. */
+.jb-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 .jb-summary { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jb-meta { display: flex; align-items: center; gap: 8px; flex: none; }
@@ -269,24 +313,118 @@ window.__ModuleLoader__.load({
       return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
     }
 
-    /** One issue row: key, summary, status, and its Jira link. */
+    /**
+     * Place one string on the clipboard.
+     *
+     * The async Clipboard API is preferred, but it rejects outside a secure
+     * context or without permission; a desktop window and a loopback page both
+     * satisfy it, a page served over plain HTTP to another host does not. The
+     * selection fallback keeps the key copyable there instead of failing.
+     * @param {string} text - exact text to copy.
+     * @returns {Promise<boolean>} whether the copy succeeded.
+     */
+    async function copyText(text) {
+      try {
+        if (typeof navigator !== 'undefined' && typeof navigator.clipboard?.writeText === 'function') {
+          await navigator.clipboard.writeText(text)
+          return true
+        }
+      } catch {
+        // Rejected: fall through to the selection path below.
+      }
+      try {
+        const area = document.createElement('textarea')
+        area.value = text
+        area.setAttribute('readonly', '')
+        area.style.position = 'fixed'
+        area.style.top = '-1000px'
+        area.style.opacity = '0'
+        document.body.append(area)
+        area.select()
+        const ok = typeof document.execCommand === 'function' && document.execCommand('copy')
+        area.remove()
+        return ok === true
+      } catch {
+        return false
+      }
+    }
+
+    /** The external-link glyph the row's jump control draws. */
+    function OpenInJiraIcon() {
+      return h('svg', {
+        viewBox: '0 0 16 16', width: 14, height: 14,
+        'aria-hidden': true, focusable: 'false',
+      },
+        h('path', {
+          d: 'M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3',
+          fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round',
+        }),
+        h('path', {
+          d: 'M9.5 2.5h4v4',
+          fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5,
+          'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        }),
+        h('path', {
+          d: 'M13.5 2.5 7.5 8.5',
+          fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round',
+        }),
+      )
+    }
+
+    /**
+     * One issue row: a key that copies, the summary, its metadata, and the
+     * control that opens the issue in Jira.
+     */
     function IssueRow({ issue, t, locale }) {
       const updated = formatDate(issue.updated, locale)
       const due = formatDate(issue.due, locale)
-      return h('a', {
-        className: 'jb-row',
-        href: issue.url,
-        target: '_blank',
-        rel: 'noreferrer noopener',
-        title: `${issue.key} ${issue.summary}`,
-      },
-        h('span', { className: 'jb-key' }, issue.key),
+      const [copyState, setCopyState] = useState('idle')
+      const resetTimer = useRef(null)
+
+      // A row can unmount (refresh, group change) while its confirmation timer
+      // is pending; clearing on unmount keeps the timer from touching it.
+      useEffect(() => () => {
+        if (resetTimer.current !== null) clearTimeout(resetTimer.current)
+      }, [])
+
+      const copyKey = async () => {
+        const ok = await copyText(issue.key)
+        setCopyState(ok ? 'copied' : 'failed')
+        if (resetTimer.current !== null) clearTimeout(resetTimer.current)
+        resetTimer.current = setTimeout(() => { setCopyState('idle') }, 1600)
+      }
+
+      const feedback = copyState === 'copied' ? t('copied') : copyState === 'failed' ? t('copyFailed') : t('copyKey')
+
+      return h('div', { className: 'jb-row' },
+        h('button', {
+          className: 'jb-key',
+          type: 'button',
+          'data-state': copyState,
+          title: feedback,
+          'aria-label': `${t('copyKey')}: ${issue.key}`,
+          onClick: copyKey,
+        },
+          h('span', {}, issue.key),
+          copyState === 'idle'
+            ? null
+            : h('span', { className: 'jb-keyMark', 'aria-hidden': 'true' }, copyState === 'copied' ? '✓' : '!'),
+        ),
         h('span', { className: 'jb-summary' }, issue.summary),
         h('span', { className: 'jb-meta' },
           due === '' ? null : h('span', { className: 'jb-chip' }, `${t('due')} ${due}`),
           updated === '' ? null : h('span', { className: 'jb-chip' }, `${t('updated')} ${updated}`),
           issue.status === null ? null : h('span', { className: 'jb-chip', 'data-tone': issue.status.tone }, issue.status.name),
         ),
+        h('a', {
+          className: 'jb-open',
+          href: issue.url,
+          target: '_blank',
+          rel: 'noreferrer noopener',
+          title: t('openInJira'),
+          'aria-label': `${t('openInJira')}: ${issue.key}`,
+        }, h(OpenInJiraIcon)),
+        h('span', { className: 'jb-sr', role: 'status' }, copyState === 'idle' ? '' : feedback),
       )
     }
 
