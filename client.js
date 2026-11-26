@@ -157,27 +157,76 @@ window.__ModuleLoader__.load({
 }
 .jb-button[data-variant='primary']:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .jb-body { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 32px; }
-.jb-group { margin-bottom: 24px; }
+.jb-group { margin-bottom: 14px; }
 .jb-groupHead {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: .02em;
   color: var(--dsw-alias-label-secondary);
-  margin: 0 0 8px;
+  margin: 0 0 6px;
 }
 .jb-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
-.jb-rows { display: flex; flex-direction: column; gap: 6px; }
-.jb-row {
-  position: relative;
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 12px;
+/* Cards, not rows: at a typical panel width this fits four to five per line, so
+   one screen shows roughly twice as many issues as a one-line-per-issue list. */
+.jb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 7px;
+  align-items: stretch;
+}
+.jb-card {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+  padding: 6px 8px 7px;
   border-radius: var(--dsw-radius-sm, 8px);
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-card-fill);
 }
-/* The row itself is deliberately not a link: the key copies and the trailing
-   control opens Jira, so a whole-row link would make every click ambiguous. */
+/* The card is deliberately not a link: the key copies and the trailing control
+   opens Jira, so a whole-card link would make every click ambiguous. */
 @media (hover: hover) {
-  .jb-row:hover { background: var(--dsw-alias-card-fill-hover); }
+  .jb-card:hover { background: var(--dsw-alias-card-fill-hover); }
+}
+.jb-cardTop { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-height: 18px; }
+.jb-cardTop .jb-open { width: 22px; height: 22px; }
+/* Two lines cover most summaries; the full text stays in the DOM and is shown
+   in the hover card, so nothing is lost to the clamp. */
+.jb-cardTitle {
+  margin: 0;
+  font-size: 12.5px; line-height: 1.35;
+  color: var(--dsw-alias-label-primary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.jb-cardMeta {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 14px;
+  font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap; overflow: hidden;
+}
+.jb-cardMeta .jb-chip { padding: 0 6px; }
+/* Fixed so the body's scroll container cannot clip it, and pointer-transparent
+   so it never steals the hover it belongs to. */
+.jb-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 360px;
+  padding: 7px 9px;
+  border-radius: var(--dsw-radius-sm, 8px);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px; line-height: 1.45;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.jb-tipKey {
+  display: block;
+  font-family: var(--dsw-font-family-code, monospace);
+  font-size: 11px; color: var(--dsw-alias-link);
+  margin-bottom: 2px;
 }
 .jb-key {
   flex: none;
@@ -219,8 +268,6 @@ window.__ModuleLoader__.load({
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-.jb-summary { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jb-meta { display: flex; align-items: center; gap: 8px; flex: none; }
 .jb-chip {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 1px 8px; border-radius: 999px;
@@ -314,6 +361,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Format one ISO timestamp as a compact relative age, because a card's meta
+     * line is narrow and "3 days ago" carries more than an absolute date at the
+     * same width. Anything older than a month falls back to the date: "412 days
+     * ago" is both long and useless.
+     * @param {string} iso - timestamp from Jira, including its numeric offset.
+     * @param {string} locale - active locale id.
+     * @param {(key: string) => string} t - the card's namespace translator.
+     * @returns {string} display text, or an empty string for an unusable value.
+     */
+    function formatRelative(iso, locale, t) {
+      if (typeof iso !== 'string' || iso === '') return ''
+      const date = new Date(iso)
+      if (Number.isNaN(date.getTime())) return ''
+      const minutes = Math.round((date.getTime() - Date.now()) / 60000)
+      const magnitude = Math.abs(minutes)
+      const dated = `${t('updated')} ${formatDate(iso, locale)}`
+      if (magnitude > 60 * 24 * 30) return dated
+      try {
+        const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' })
+        if (magnitude < 60) return `${t('updated')} ${relative.format(minutes, 'minute')}`
+        if (magnitude < 60 * 24) return `${t('updated')} ${relative.format(Math.round(minutes / 60), 'hour')}`
+        return `${t('updated')} ${relative.format(Math.round(minutes / (60 * 24)), 'day')}`
+      } catch {
+        // A locale the runtime cannot resolve keeps the plain date instead.
+        return dated
+      }
+    }
+
+    /**
      * Place one string on the clipboard.
      *
      * The async Clipboard API is preferred, but it rejects outside a secure
@@ -372,16 +448,22 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * One issue row: a key that copies, the summary, its metadata, and the
-     * control that opens the issue in Jira.
+     * One issue card: a key that copies, the summary clamped to two lines, its
+     * metadata, and the control that opens the issue in Jira.
+     *
+     * The clamp is visual only — the full summary stays in the DOM for assistive
+     * technology and for the copy path — and the hover card appears when the
+     * rendered title actually overflows, so short titles get no redundant popup.
      */
-    function IssueRow({ issue, t, locale }) {
+    function IssueCard({ issue, t, locale }) {
       const updated = formatDate(issue.updated, locale)
       const due = formatDate(issue.due, locale)
       const [copyState, setCopyState] = useState('idle')
+      const [tip, setTip] = useState(null)
       const resetTimer = useRef(null)
+      const titleRef = useRef(null)
 
-      // A row can unmount (refresh, group change) while its confirmation timer
+      // A card can unmount (refresh, group change) while its confirmation timer
       // is pending; clearing on unmount keeps the timer from touching it.
       useEffect(() => () => {
         if (resetTimer.current !== null) clearTimeout(resetTimer.current)
@@ -396,35 +478,76 @@ window.__ModuleLoader__.load({
 
       const feedback = copyState === 'copied' ? t('copied') : copyState === 'failed' ? t('copyFailed') : t('copyKey')
 
-      return h('div', { className: 'jb-row' },
-        h('button', {
-          className: 'jb-key',
-          type: 'button',
-          'data-state': copyState,
-          title: feedback,
-          'aria-label': `${t('copyKey')}: ${issue.key}`,
-          onClick: copyKey,
-        },
-          h('span', {}, issue.key),
-          copyState === 'idle'
-            ? null
-            : h('span', { className: 'jb-keyMark', 'aria-hidden': 'true' }, copyState === 'copied' ? '✓' : '!'),
+      /** Open the hover card only when the clamped title is actually cut off. */
+      const showTip = (event) => {
+        const node = titleRef.current
+        if (node === null || node.scrollHeight <= node.clientHeight + 1) return
+        const rect = event.currentTarget.getBoundingClientRect()
+        const width = Math.min(360, window.innerWidth - 16)
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+        // Below the card by default; above it when the viewport has no room.
+        const placeAbove = rect.bottom + 96 > window.innerHeight
+        setTip({
+          left,
+          width,
+          ...(placeAbove
+            ? { bottom: window.innerHeight - rect.top + 6 }
+            : { top: rect.bottom + 6 }),
+          summary: issue.summary,
+        })
+      }
+
+      const hideTip = () => { setTip(null) }
+
+      return h('div', { className: 'jb-card' },
+        h('div', { className: 'jb-cardTop' },
+          h('button', {
+            className: 'jb-key',
+            type: 'button',
+            'data-state': copyState,
+            title: feedback,
+            'aria-label': `${t('copyKey')}: ${issue.key}`,
+            onClick: copyKey,
+          },
+            h('span', {}, issue.key),
+            copyState === 'idle'
+              ? null
+              : h('span', { className: 'jb-keyMark', 'aria-hidden': 'true' }, copyState === 'copied' ? '✓' : '!'),
+          ),
+          h('a', {
+            className: 'jb-open',
+            href: issue.url,
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            title: t('openInJira'),
+            'aria-label': `${t('openInJira')}: ${issue.key}`,
+          }, h(OpenInJiraIcon)),
         ),
-        h('span', { className: 'jb-summary' }, issue.summary),
-        h('span', { className: 'jb-meta' },
-          due === '' ? null : h('span', { className: 'jb-chip' }, `${t('due')} ${due}`),
-          updated === '' ? null : h('span', { className: 'jb-chip' }, `${t('updated')} ${updated}`),
+        h('p', {
+          className: 'jb-cardTitle',
+          ref: titleRef,
+          onMouseEnter: showTip,
+          onMouseLeave: hideTip,
+        }, issue.summary),
+        h('div', { className: 'jb-cardMeta' },
           issue.status === null ? null : h('span', { className: 'jb-chip', 'data-tone': issue.status.tone }, issue.status.name),
+          due === '' ? null : h('span', {}, `${t('due')} ${due}`),
+          updated === '' ? null : h('span', {}, formatRelative(issue.updated, locale, t)),
         ),
-        h('a', {
-          className: 'jb-open',
-          href: issue.url,
-          target: '_blank',
-          rel: 'noreferrer noopener',
-          title: t('openInJira'),
-          'aria-label': `${t('openInJira')}: ${issue.key}`,
-        }, h(OpenInJiraIcon)),
         h('span', { className: 'jb-sr', role: 'status' }, copyState === 'idle' ? '' : feedback),
+        tip === null ? null : h('div', {
+          className: 'jb-tip',
+          role: 'tooltip',
+          style: {
+            left: `${String(tip.left)}px`,
+            width: `${String(tip.width)}px`,
+            ...(tip.top === undefined ? {} : { top: `${String(tip.top)}px` }),
+            ...(tip.bottom === undefined ? {} : { bottom: `${String(tip.bottom)}px` }),
+          },
+        },
+          h('span', { className: 'jb-tipKey' }, issue.key),
+          h('span', {}, tip.summary),
+        ),
       )
     }
 
@@ -637,8 +760,8 @@ window.__ModuleLoader__.load({
                 group.priority?.name || t('noPriority')),
               h('span', { className: 'jb-count' }, String(group.issues.length)),
             ),
-            h('div', { className: 'jb-rows' },
-              group.issues.map(issue => h(IssueRow, { key: issue.key, issue, t, locale: localeId })),
+            h('div', { className: 'jb-grid' },
+              group.issues.map(issue => h(IssueCard, { key: issue.key, issue, t, locale: localeId })),
             ),
           )),
         )
