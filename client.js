@@ -132,6 +132,7 @@ window.__ModuleLoader__.load({
   gap: 16px;
   flex-wrap: wrap;
   padding-bottom: 16px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 .jb-headText { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .jb-title { font-size: 18px; font-weight: 600; margin: 0; }
@@ -153,16 +154,30 @@ window.__ModuleLoader__.load({
 .jb-button[data-variant='primary'] {
   background: var(--dsw-alias-button-primary-fill);
   border-color: transparent;
-  color: var(--dsw-alias-label-primary-foreground, #fff);
+  color: var(--dsw-alias-label-primary-foreground);
 }
 .jb-button[data-variant='primary']:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .jb-body { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 32px; }
 .jb-group { margin-bottom: 14px; }
+/* Groups stay on screen while their cards scroll under them, so a long board
+   always says which priority the visible cards belong to. The background is a
+   gradient rather than a solid block so the fade covers the row it replaces. */
 .jb-groupHead {
-  display: flex; align-items: center; gap: 6px;
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px;
+  padding: 4px 0 5px;
   font-size: 11px; font-weight: 600; letter-spacing: .02em;
   color: var(--dsw-alias-label-secondary);
-  margin: 0 0 6px;
+  background: linear-gradient(to bottom, var(--dsw-alias-bg-base) 72%, transparent);
+}
+/* A hairline filling the leftover width, the way the host's section rules do. */
+.jb-groupHead::after {
+  content: '';
+  flex: 1;
+  height: 0.5px;
+  min-width: 12px;
+  background: var(--dsw-alias-border-l2);
 }
 .jb-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 /* Cards, not rows: at a typical panel width this fits four to five per line, so
@@ -177,14 +192,30 @@ window.__ModuleLoader__.load({
   display: flex; flex-direction: column; gap: 4px;
   min-width: 0;
   padding: 6px 8px 7px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md, 12px);
+  /* A 0.5px hairline frame, the host's frame treatment; the hover state swaps
+     it for the elevation trio's own stroke so the shadow carries it. */
+  border: 0.5px solid var(--dsw-alias-border-l4);
   background: var(--dsw-alias-card-fill);
+  transition:
+    transform var(--ds-transition-duration-fast, .1s) var(--ds-ease-in-out, ease),
+    box-shadow var(--ds-transition-duration-fast, .1s) var(--ds-ease-in-out, ease),
+    border-color var(--ds-transition-duration-fast, .1s) var(--ds-ease-in-out, ease),
+    background-color var(--ds-transition-duration-fast, .1s) var(--ds-ease-in-out, ease);
 }
 /* The card is deliberately not a link: the key copies and the trailing control
    opens Jira, so a whole-card link would make every click ambiguous. */
 @media (hover: hover) {
-  .jb-card:hover { background: var(--dsw-alias-card-fill-hover); }
+  .jb-card:hover {
+    transform: translateY(-1px);
+    border-color: transparent;
+    box-shadow: var(--dsw-elevation-panel);
+    background: var(--dsw-alias-card-fill-hover);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jb-card { transition: none; }
+  .jb-card:hover { transform: none; }
 }
 .jb-cardTop { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-height: 18px; }
 .jb-cardTop .jb-open { width: 22px; height: 22px; }
@@ -206,19 +237,21 @@ window.__ModuleLoader__.load({
   font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-tertiary);
   white-space: nowrap; overflow: hidden;
 }
-.jb-cardMeta .jb-chip { padding: 0 6px; }
+.jb-cardMeta .jb-chip { padding: 0 6px; line-height: 14px; }
 /* Fixed so the body's scroll container cannot clip it, and pointer-transparent
    so it never steals the hover it belongs to. */
 .jb-tip {
   position: fixed;
   z-index: 60;
   max-width: 360px;
-  padding: 7px 9px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  border: 1px solid var(--dsw-alias-border-l2);
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-md, 12px);
+  /* The host's floating-surface treatment carries its own 0.5px stroke. */
+  border: 0;
+  box-shadow: var(--dsw-elevation-prominent);
   background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2));
   color: var(--dsw-alias-label-primary);
-  font-size: 12px; line-height: 1.45;
+  font-size: 12px; line-height: 1.5;
   overflow-wrap: anywhere;
   pointer-events: none;
 }
@@ -232,7 +265,7 @@ window.__ModuleLoader__.load({
   flex: none;
   display: inline-flex; align-items: center; gap: 4px;
   appearance: none; cursor: pointer;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border: 1px solid transparent;
   border-radius: var(--dsw-radius-xs, 4px);
   background: none;
@@ -268,17 +301,21 @@ window.__ModuleLoader__.load({
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
+/* Soft tinted pills instead of outlined ones: the fill derives from the chip's
+   own colour, so one rule themes every tone and both palettes. The outline
+   stays as the fallback for an engine without colour-mix. */
 .jb-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 1px 8px; border-radius: 999px;
-  font-size: 11px; white-space: nowrap;
-  border: 1px solid var(--dsw-alias-border-l3);
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; line-height: 15px; white-space: nowrap;
   color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
-.jb-chip[data-tone='danger'] { border-color: var(--dsw-alias-state-error-secondary); color: var(--dsw-alias-state-error-primary); }
-.jb-chip[data-tone='warn'] { border-color: var(--dsw-alias-state-warn-secondary); color: var(--dsw-alias-state-warn-primary); }
-.jb-chip[data-tone='progress'] { border-color: var(--dsw-alias-state-business-tertiary); color: var(--dsw-alias-state-business-primary); }
-.jb-chip[data-tone='done'] { border-color: var(--dsw-alias-state-success-secondary); color: var(--dsw-alias-state-success-primary); }
+.jb-chip[data-tone='danger'] { color: var(--dsw-alias-state-error-primary); }
+.jb-chip[data-tone='warn'] { color: var(--dsw-alias-state-warn-primary); }
+.jb-chip[data-tone='progress'] { color: var(--dsw-alias-state-business-primary); }
+.jb-chip[data-tone='done'] { color: var(--dsw-alias-state-success-primary); }
 .jb-placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   min-height: 220px; padding: 32px;
@@ -317,6 +354,13 @@ window.__ModuleLoader__.load({
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; color: var(--dsw-alias-label-tertiary);
 }
+.jb-status::before {
+  content: '';
+  width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor;
+  opacity: .55;
+}
+.jb-status[data-configured='true']::before { opacity: 1; }
 .jb-status[data-configured='true'] { color: var(--dsw-alias-state-success-primary); }
 @media (pointer: coarse) {
   .jb-input, .jb-select { font-size: 16px; }
