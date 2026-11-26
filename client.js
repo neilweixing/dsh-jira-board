@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useCallback, useEffect, useMemo, useRef, useState } = React
+    const { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = React
 
     /** Connection channel served by the Host half. */
     const CHANNEL = '/dsh-jira-board'
@@ -499,11 +499,10 @@ window.__ModuleLoader__.load({
      * technology and for the copy path — and the hover card appears when the
      * rendered title actually overflows, so short titles get no redundant popup.
      */
-    function IssueCard({ issue, t, locale }) {
+    function IssueCard({ issue, t, locale, onTip }) {
       const updated = formatDate(issue.updated, locale)
       const due = formatDate(issue.due, locale)
       const [copyState, setCopyState] = useState('idle')
-      const [tip, setTip] = useState(null)
       const resetTimer = useRef(null)
       const titleRef = useRef(null)
 
@@ -522,7 +521,16 @@ window.__ModuleLoader__.load({
 
       const feedback = copyState === 'copied' ? t('copied') : copyState === 'failed' ? t('copyFailed') : t('copyKey')
 
-      /** Open the hover card only when the clamped title is actually cut off. */
+      /**
+       * Ask the panel for the hover card, but only when the clamped title is
+       * actually cut off.
+       *
+       * The panel renders it, not this card: the hovered card is translated by
+       * a transform, and a transformed element becomes the containing block for
+       * its `position: fixed` descendants. A popup rendered here would be
+       * positioned against the card instead of the viewport, which is what put
+       * it far from the pointer.
+       */
       const showTip = (event) => {
         const node = titleRef.current
         if (node === null || node.scrollHeight <= node.clientHeight + 1) return
@@ -531,17 +539,18 @@ window.__ModuleLoader__.load({
         const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
         // Below the card by default; above it when the viewport has no room.
         const placeAbove = rect.bottom + 96 > window.innerHeight
-        setTip({
+        onTip({
           left,
           width,
           ...(placeAbove
             ? { bottom: window.innerHeight - rect.top + 6 }
             : { top: rect.bottom + 6 }),
+          key: issue.key,
           summary: issue.summary,
         })
       }
 
-      const hideTip = () => { setTip(null) }
+      const hideTip = () => { onTip(null) }
 
       return h('div', { className: 'jb-card' },
         h('div', { className: 'jb-cardTop' },
@@ -579,19 +588,6 @@ window.__ModuleLoader__.load({
           updated === '' ? null : h('span', {}, formatRelative(issue.updated, locale, t)),
         ),
         h('span', { className: 'jb-sr', role: 'status' }, copyState === 'idle' ? '' : feedback),
-        tip === null ? null : h('div', {
-          className: 'jb-tip',
-          role: 'tooltip',
-          style: {
-            left: `${String(tip.left)}px`,
-            width: `${String(tip.width)}px`,
-            ...(tip.top === undefined ? {} : { top: `${String(tip.top)}px` }),
-            ...(tip.bottom === undefined ? {} : { bottom: `${String(tip.bottom)}px` }),
-          },
-        },
-          h('span', { className: 'jb-tipKey' }, issue.key),
-          h('span', {}, tip.summary),
-        ),
       )
     }
 
@@ -715,6 +711,34 @@ window.__ModuleLoader__.load({
       const [refreshing, setRefreshing] = useState(false)
       const [error, setError] = useState('')
       const [showSettings, setShowSettings] = useState(false)
+      // One popup for the whole board, held here so it is never a descendant of
+      // a hovering card (whose transform would capture its fixed positioning).
+      const [tip, setTip] = useState(null)
+      const tipRef = useRef(null)
+
+      /**
+       * Make the popup land on the viewport coordinates it asked for.
+       *
+       * `position: fixed` resolves against the viewport only while no ancestor
+       * forms a containing block for it; a transformed, filtered, or contained
+       * ancestor silently rebases it, which is exactly how a popup ends up far
+       * from its card. Rather than trust every ancestor, this measures the
+       * rendered box once before paint and translates by the difference. A
+       * popup already in place is left untouched.
+       */
+      useLayoutEffect(() => {
+        const node = tipRef.current
+        if (node === null || tip === null) return
+        node.style.transform = 'none'
+        const rect = node.getBoundingClientRect()
+        const wantedTop = tip.top === undefined
+          ? window.innerHeight - tip.bottom - rect.height
+          : tip.top
+        const dx = tip.left - rect.left
+        const dy = wantedTop - rect.top
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
+        node.style.transform = `translate(${String(dx)}px, ${String(dy)}px)`
+      }, [tip])
       const inflight = useRef(null)
 
       /** Read the Host's connection state, then the board when it is configured. */
@@ -725,6 +749,7 @@ window.__ModuleLoader__.load({
         if (manual === true) setRefreshing(true)
         else setLoading(true)
         setError('')
+        setTip(null)
         try {
           const statusReply = await call(connection, 'status', {}, controller.signal)
           if (controller.signal.aborted) return
@@ -805,7 +830,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'jb-count' }, String(group.issues.length)),
             ),
             h('div', { className: 'jb-grid' },
-              group.issues.map(issue => h(IssueCard, { key: issue.key, issue, t, locale: localeId })),
+              group.issues.map(issue => h(IssueCard, { key: issue.key, issue, t, locale: localeId, onTip: setTip })),
             ),
           )),
         )
@@ -835,6 +860,20 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { className: 'jb-body' }, body),
+        tip === null ? null : h('div', {
+          className: 'jb-tip',
+          role: 'tooltip',
+          ref: tipRef,
+          style: {
+            left: `${String(tip.left)}px`,
+            width: `${String(tip.width)}px`,
+            ...(tip.top === undefined ? {} : { top: `${String(tip.top)}px` }),
+            ...(tip.bottom === undefined ? {} : { bottom: `${String(tip.bottom)}px` }),
+          },
+        },
+          h('span', { className: 'jb-tipKey' }, tip.key),
+          h('span', {}, tip.summary),
+        ),
       )
     }
 
