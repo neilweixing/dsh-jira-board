@@ -71,6 +71,11 @@ window.__ModuleLoader__.load({
         copyKey: 'Copy issue key',
         copied: 'Copied',
         copyFailed: 'Copy failed',
+        handle: 'Handle',
+        handleHint: 'Choose a workspace and handle this issue in a new session',
+        handlePrompt: 'Please handle {key}',
+        pickWorkspace: 'Handle in workspace',
+        noWorkspace: 'No workspace yet. Create one in the sidebar first.',
         saved: 'Connection saved and verified.',
         cleared: 'Connection forgotten.',
         noPriority: 'No priority',
@@ -107,6 +112,11 @@ window.__ModuleLoader__.load({
         copyKey: '复制编号',
         copied: '已复制',
         copyFailed: '复制失败',
+        handle: '处理',
+        handleHint: '选择工作区并在新会话里处理该事项',
+        handlePrompt: '帮我处理 {key}',
+        pickWorkspace: '选择工作区处理',
+        noWorkspace: '还没有工作区，请先在左侧栏创建一个。',
         saved: '连接已保存并验证通过。',
         cleared: '连接已清除。',
         noPriority: '无优先级',
@@ -217,8 +227,30 @@ window.__ModuleLoader__.load({
   .jb-card { transition: none; }
   .jb-card:hover { transform: none; }
 }
-.jb-cardTop { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-height: 18px; }
+.jb-cardTop { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-height: 22px; }
+.jb-cardActions { display: flex; align-items: center; gap: 2px; flex: none; }
 .jb-cardTop .jb-open { width: 22px; height: 22px; }
+/* The card's one action: it opens a Session, so it takes the accent on hover
+   instead of looking like the copy and jump controls beside it. */
+.jb-handle {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 22px; padding: 0 7px;
+  border-radius: var(--dsw-radius-xs, 4px);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px; line-height: 1;
+  font-family: inherit; cursor: pointer;
+}
+@media (hover: hover) {
+  .jb-handle:hover {
+    background: var(--dsw-alias-button-primary-fill);
+    border-color: transparent;
+    color: var(--dsw-alias-label-on-color);
+  }
+}
+.jb-handle:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 1px; }
 /* Two lines cover most summaries; the full text stays in the DOM and is shown
    in the hover card, so nothing is lost to the clamp. */
 .jb-cardTitle {
@@ -255,6 +287,42 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   pointer-events: none;
 }
+.jb-menu {
+  position: fixed;
+  z-index: 61;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: var(--dsw-radius-md, 12px);
+  border: 0;
+  box-shadow: var(--dsw-elevation-prominent);
+  background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2));
+}
+.jb-menuHead {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.jb-menuItem {
+  display: flex; flex-direction: column; gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 12px; text-align: left;
+  cursor: pointer;
+}
+.jb-menuItem:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.jb-menuItem:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: -2px; }
+.jb-menuPath {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jb-menuEmpty { padding: 6px 8px 8px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
 .jb-tipKey {
   display: block;
   font-family: var(--dsw-font-family-code, monospace);
@@ -434,6 +502,32 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Keep a fixed-position layer on the viewport coordinates it was given.
+     *
+     * `position: fixed` stays viewport-relative only while no ancestor forms a
+     * containing block for it; a transformed or contained ancestor silently
+     * rebases it. Measuring once before paint and translating by the difference
+     * keeps the layer where it was asked to be either way.
+     * @param {object} ref - ref of the layer element.
+     * @param {object|null} placement - requested `left` plus `top` or `bottom`, in viewport pixels.
+     */
+    function useFixedLayer(ref, placement) {
+      useLayoutEffect(() => {
+        const node = ref.current
+        if (node === null || placement === null) return
+        node.style.transform = 'none'
+        const rect = node.getBoundingClientRect()
+        const wantedTop = placement.top === undefined
+          ? window.innerHeight - placement.bottom - rect.height
+          : placement.top
+        const dx = placement.left - rect.left
+        const dy = wantedTop - rect.top
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
+        node.style.transform = `translate(${String(dx)}px, ${String(dy)}px)`
+      }, [placement])
+    }
+
+    /**
      * Place one string on the clipboard.
      *
      * The async Clipboard API is preferred, but it rejects outside a secure
@@ -499,7 +593,7 @@ window.__ModuleLoader__.load({
      * technology and for the copy path — and the hover card appears when the
      * rendered title actually overflows, so short titles get no redundant popup.
      */
-    function IssueCard({ issue, t, locale, onTip }) {
+    function IssueCard({ issue, t, locale, onTip, onHandle }) {
       const updated = formatDate(issue.updated, locale)
       const due = formatDate(issue.due, locale)
       const [copyState, setCopyState] = useState('idle')
@@ -567,14 +661,23 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { className: 'jb-keyMark', 'aria-hidden': 'true' }, copyState === 'copied' ? '✓' : '!'),
           ),
-          h('a', {
-            className: 'jb-open',
-            href: issue.url,
-            target: '_blank',
-            rel: 'noreferrer noopener',
-            title: t('openInJira'),
-            'aria-label': `${t('openInJira')}: ${issue.key}`,
-          }, h(OpenInJiraIcon)),
+          h('div', { className: 'jb-cardActions' },
+            onHandle === undefined ? null : h('button', {
+              className: 'jb-handle',
+              type: 'button',
+              title: t('handleHint'),
+              'aria-label': `${t('handleHint')}: ${issue.key}`,
+              onClick: (event) => { onHandle(issue, event) },
+            }, t('handle')),
+            h('a', {
+              className: 'jb-open',
+              href: issue.url,
+              target: '_blank',
+              rel: 'noreferrer noopener',
+              title: t('openInJira'),
+              'aria-label': `${t('openInJira')}: ${issue.key}`,
+            }, h(OpenInJiraIcon)),
+          ),
         ),
         h('p', {
           className: 'jb-cardTitle',
@@ -701,7 +804,7 @@ window.__ModuleLoader__.load({
 
     /** The board itself: header, refresh, groups, and every placeholder state. */
     function JiraBoardPanel(props) {
-      const { connection, locale, t } = props
+      const { connection, locale, t, uiWorkspace, workspaces } = props
       // The outlet re-renders on every locale revision, so reading the active
       // id here keeps date formatting in step with the shell's language.
       const localeId = locale.getSnapshot().active
@@ -715,30 +818,29 @@ window.__ModuleLoader__.load({
       // a hovering card (whose transform would capture its fixed positioning).
       const [tip, setTip] = useState(null)
       const tipRef = useRef(null)
+      // The workspace picker a card's Handle button opens, anchored to that button.
+      const [menu, setMenu] = useState(null)
+      const menuRef = useRef(null)
+      useFixedLayer(tipRef, tip)
+      useFixedLayer(menuRef, menu)
 
-      /**
-       * Make the popup land on the viewport coordinates it asked for.
-       *
-       * `position: fixed` resolves against the viewport only while no ancestor
-       * forms a containing block for it; a transformed, filtered, or contained
-       * ancestor silently rebases it, which is exactly how a popup ends up far
-       * from its card. Rather than trust every ancestor, this measures the
-       * rendered box once before paint and translates by the difference. A
-       * popup already in place is left untouched.
-       */
-      useLayoutEffect(() => {
-        const node = tipRef.current
-        if (node === null || tip === null) return
-        node.style.transform = 'none'
-        const rect = node.getBoundingClientRect()
-        const wantedTop = tip.top === undefined
-          ? window.innerHeight - tip.bottom - rect.height
-          : tip.top
-        const dx = tip.left - rect.left
-        const dy = wantedTop - rect.top
-        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
-        node.style.transform = `translate(${String(dx)}px, ${String(dy)}px)`
-      }, [tip])
+      // The picker closes on Escape or on a press outside it, the way a menu
+      // beside a control is expected to behave.
+      useEffect(() => {
+        if (menu === null) return undefined
+        const onKey = (event) => { if (event.key === 'Escape') setMenu(null) }
+        const onPress = (event) => {
+          const node = menuRef.current
+          if (node !== null && node.contains(event.target)) return
+          setMenu(null)
+        }
+        document.addEventListener('keydown', onKey)
+        document.addEventListener('mousedown', onPress, true)
+        return () => {
+          document.removeEventListener('keydown', onKey)
+          document.removeEventListener('mousedown', onPress, true)
+        }
+      }, [menu])
       const inflight = useRef(null)
 
       /** Read the Host's connection state, then the board when it is configured. */
@@ -797,8 +899,61 @@ window.__ModuleLoader__.load({
         setShowSettings(true)
       }
 
+      /**
+       * Open the workspace picker under one card's Handle button.
+       *
+       * The Session is only created once a workspace is chosen, because
+       * `startSession` without one inherits the current or most recent
+       * workspace — which is not always the one the reader wants for this issue.
+       * @param {object} issue - the card's issue.
+       * @param {object} event - the click, whose button anchors the menu.
+       */
+      const openHandleMenu = uiWorkspace === undefined
+        ? undefined
+        : (issue, event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const width = Math.min(260, window.innerWidth - 16)
+          setTip(null)
+          // Above the button when the viewport has no room below it.
+          const placeAbove = rect.bottom + 330 > window.innerHeight
+          setMenu({
+            left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+            width,
+            ...(placeAbove
+              ? { bottom: window.innerHeight - rect.top + 6 }
+              : { top: rect.bottom + 6 }),
+            issue,
+          })
+        }
+
+      /**
+       * Start the Session for the picker's issue in the chosen workspace.
+       *
+       * `startSession` is the host's own New Session path: it reuses or creates
+       * the blank Session in that workspace, selects it, and puts the prompt in
+       * the composer. It deliberately does not submit, so nothing reaches a
+       * model until the reader sends it.
+       * @param {string} workspaceId - the workspace the reader picked.
+       */
+      const startHandling = (workspaceId) => {
+        const issue = menu?.issue
+        setMenu(null)
+        if (issue === undefined || uiWorkspace === undefined) return
+        try {
+          uiWorkspace.startSession(workspaceId, {
+            prompt: t('handlePrompt', { key: issue.key }),
+            whenDraftExists: 'append',
+          })
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }
+
       const groups = board?.groups ?? []
       const configured = status?.configured === true
+      // Read once per render: the picker is transient, so it needs the catalog
+      // as it stands when it opens rather than a live subscription.
+      const workspaceItems = workspaces?.list?.getSnapshot()?.items ?? []
 
       const body = (() => {
         if (error !== '' && board === null) {
@@ -830,7 +985,9 @@ window.__ModuleLoader__.load({
               h('span', { className: 'jb-count' }, String(group.issues.length)),
             ),
             h('div', { className: 'jb-grid' },
-              group.issues.map(issue => h(IssueCard, { key: issue.key, issue, t, locale: localeId, onTip: setTip })),
+              group.issues.map(issue => h(IssueCard, {
+                key: issue.key, issue, t, locale: localeId, onTip: setTip, onHandle: openHandleMenu,
+              })),
             ),
           )),
         )
@@ -874,6 +1031,30 @@ window.__ModuleLoader__.load({
           h('span', { className: 'jb-tipKey' }, tip.key),
           h('span', {}, tip.summary),
         ),
+        menu === null ? null : h('div', {
+          className: 'jb-menu',
+          ref: menuRef,
+          'aria-label': t('pickWorkspace'),
+          style: {
+            left: `${String(menu.left)}px`,
+            width: `${String(menu.width)}px`,
+            ...(menu.top === undefined ? {} : { top: `${String(menu.top)}px` }),
+            ...(menu.bottom === undefined ? {} : { bottom: `${String(menu.bottom)}px` }),
+          },
+        },
+          h('div', { className: 'jb-menuHead' }, `${t('pickWorkspace')} · ${menu.issue.key}`),
+          workspaceItems.length === 0
+            ? h('div', { className: 'jb-menuEmpty' }, t('noWorkspace'))
+            : workspaceItems.map(view => h('button', {
+              key: view.workspaceId,
+              className: 'jb-menuItem',
+              type: 'button',
+              onClick: () => { startHandling(view.workspaceId) },
+            },
+              h('span', {}, view.title),
+              h('span', { className: 'jb-menuPath' }, view.path),
+            )),
+        ),
       )
     }
 
@@ -903,7 +1084,12 @@ window.__ModuleLoader__.load({
           name: 'main',
           key: PANEL_ID,
           locale: NS,
-          inject: () => ({ connection: ctx.connection, locale: ctx.locale }),
+          inject: () => ({
+            connection: ctx.connection,
+            locale: ctx.locale,
+            uiWorkspace: ctx.get('uiWorkspace'),
+            workspaces: ctx.get('workspaces'),
+          }),
         }, JiraBoardPanel))
 
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
