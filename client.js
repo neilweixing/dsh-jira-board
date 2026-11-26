@@ -76,6 +76,7 @@ window.__ModuleLoader__.load({
         handlePrompt: 'Please handle {key}',
         pickWorkspace: 'Handle in workspace',
         noWorkspace: 'No workspace yet. Create one in the sidebar first.',
+        starting: 'Starting…',
         saved: 'Connection saved and verified.',
         cleared: 'Connection forgotten.',
         noPriority: 'No priority',
@@ -117,6 +118,7 @@ window.__ModuleLoader__.load({
         handlePrompt: '帮我处理 {key}',
         pickWorkspace: '选择工作区处理',
         noWorkspace: '还没有工作区，请先在左侧栏创建一个。',
+        starting: '正在启动…',
         saved: '连接已保存并验证通过。',
         cleared: '连接已清除。',
         noPriority: '无优先级',
@@ -245,9 +247,9 @@ window.__ModuleLoader__.load({
 }
 @media (hover: hover) {
   .jb-handle:hover {
-    background: var(--dsw-alias-button-primary-fill);
-    border-color: transparent;
-    color: var(--dsw-alias-label-on-color);
+    background: var(--dsw-alias-interactive-bg-hover);
+    border-color: var(--dsw-alias-border-l2);
+    color: var(--dsw-alias-label-primary);
   }
 }
 .jb-handle:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 1px; }
@@ -325,7 +327,7 @@ window.__ModuleLoader__.load({
 .jb-menuEmpty { padding: 6px 8px 8px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
 .jb-tipKey {
   display: block;
-  font-family: var(--dsw-font-family-code, monospace);
+  font-family: var(--ds-font-family-code, monospace);
   font-size: 11px; color: var(--dsw-alias-link);
   margin-bottom: 2px;
 }
@@ -337,7 +339,7 @@ window.__ModuleLoader__.load({
   border: 1px solid transparent;
   border-radius: var(--dsw-radius-xs, 4px);
   background: none;
-  font-family: var(--dsw-font-family-code, monospace);
+  font-family: var(--ds-font-family-code, monospace);
   font-size: 12px; line-height: 1.5;
   color: var(--dsw-alias-link);
 }
@@ -593,7 +595,7 @@ window.__ModuleLoader__.load({
      * technology and for the copy path — and the hover card appears when the
      * rendered title actually overflows, so short titles get no redundant popup.
      */
-    function IssueCard({ issue, t, locale, onTip, onHandle }) {
+    function IssueCard({ issue, t, locale, onTip, onHandle, starting }) {
       const updated = formatDate(issue.updated, locale)
       const due = formatDate(issue.due, locale)
       const [copyState, setCopyState] = useState('idle')
@@ -667,8 +669,9 @@ window.__ModuleLoader__.load({
               type: 'button',
               title: t('handleHint'),
               'aria-label': `${t('handleHint')}: ${issue.key}`,
+              disabled: starting === true,
               onClick: (event) => { onHandle(issue, event) },
-            }, t('handle')),
+            }, starting === true ? t('starting') : t('handle')),
             h('a', {
               className: 'jb-open',
               href: issue.url,
@@ -804,7 +807,7 @@ window.__ModuleLoader__.load({
 
     /** The board itself: header, refresh, groups, and every placeholder state. */
     function JiraBoardPanel(props) {
-      const { connection, locale, t, uiWorkspace, workspaces } = props
+      const { connection, locale, t, uiWorkspace, workspaces, sessions } = props
       // The outlet re-renders on every locale revision, so reading the active
       // id here keeps date formatting in step with the shell's language.
       const localeId = locale.getSnapshot().active
@@ -821,6 +824,9 @@ window.__ModuleLoader__.load({
       // The workspace picker a card's Handle button opens, anchored to that button.
       const [menu, setMenu] = useState(null)
       const menuRef = useRef(null)
+      // The issue whose Session is being created and sent, so its card cannot
+      // start a second one while the first is still in flight.
+      const [starting, setStarting] = useState(null)
       useFixedLayer(tipRef, tip)
       useFixedLayer(menuRef, menu)
 
@@ -908,7 +914,7 @@ window.__ModuleLoader__.load({
        * @param {object} issue - the card's issue.
        * @param {object} event - the click, whose button anchors the menu.
        */
-      const openHandleMenu = uiWorkspace === undefined
+      const openHandleMenu = uiWorkspace === undefined || sessions === undefined
         ? undefined
         : (issue, event) => {
           const rect = event.currentTarget.getBoundingClientRect()
@@ -927,25 +933,37 @@ window.__ModuleLoader__.load({
         }
 
       /**
-       * Start the Session for the picker's issue in the chosen workspace.
+       * Create a Session in the chosen workspace and send the request into it.
        *
-       * `startSession` is the host's own New Session path: it reuses or creates
-       * the blank Session in that workspace, selects it, and puts the prompt in
-       * the composer. It deliberately does not submit, so nothing reaches a
-       * model until the reader sends it.
+       * Three public steps, in this order: `sessions.create` returns the new
+       * Session's identity, `session.prompt` asks the Host to admit the message
+       * as a queued turn, and only then `openSession` shows the running
+       * conversation — so a failed send is reported here, on a panel that is
+       * still mounted, instead of vanishing behind a navigation.
        * @param {string} workspaceId - the workspace the reader picked.
        */
-      const startHandling = (workspaceId) => {
+      const startHandling = async (workspaceId) => {
         const issue = menu?.issue
         setMenu(null)
-        if (issue === undefined || uiWorkspace === undefined) return
+        if (issue === undefined || sessions === undefined || uiWorkspace === undefined) return
+        if (starting !== null) return
+        setStarting(issue.key)
+        setError('')
         try {
-          uiWorkspace.startSession(workspaceId, {
-            prompt: t('handlePrompt', { key: issue.key }),
-            whenDraftExists: 'append',
+          const sessionId = await sessions.create({ workspaceId })
+          const text = t('handlePrompt', { key: issue.key })
+          await sessions.using(sessionId, { source: 'jira-board' }, async (reference) => {
+            await reference.ready
+            const result = await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
+            if (!result.ok) {
+              throw new Error(result.error.message || result.error.code)
+            }
           })
+          uiWorkspace.openSession(sessionId)
         } catch (failure) {
           setError(failure instanceof Error ? failure.message : String(failure))
+        } finally {
+          setStarting(null)
         }
       }
 
@@ -987,6 +1005,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'jb-grid' },
               group.issues.map(issue => h(IssueCard, {
                 key: issue.key, issue, t, locale: localeId, onTip: setTip, onHandle: openHandleMenu,
+                starting: starting === issue.key,
               })),
             ),
           )),
@@ -1089,6 +1108,7 @@ window.__ModuleLoader__.load({
             locale: ctx.locale,
             uiWorkspace: ctx.get('uiWorkspace'),
             workspaces: ctx.get('workspaces'),
+            sessions: ctx.get('sessions'),
           }),
         }, JiraBoardPanel))
 
