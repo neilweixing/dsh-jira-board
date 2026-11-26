@@ -1,6 +1,6 @@
 {
   "name": "dsh-jira-board",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Show the current Jira account's own issues as a priority-ordered board inside DeepSeek Harness",
